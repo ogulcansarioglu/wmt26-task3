@@ -159,6 +159,21 @@ Apple M4 Max, **128 GB unified memory**, 278 GB free disk (2026-07-16).
   required — owner action) and CC-BY-NC-SA licensed (fine for shared-task use;
   weights never redistributed; code stays MIT).
 
+## System description paper (recon 2026-07-16, conference page)
+
+- **Deadline: 7 August 2026** — same as research papers, only 8 days after the
+  30 July submission deadline. Analysis + prose must be essentially done during
+  the submission window. Notification 2 Sept; **camera-ready 11 Sept** (official
+  test rankings get added then if not out earlier).
+- Length: "no maximum length for system papers, but normally a short paper
+  (4–6 pages) is appropriate". EMNLP formatting (ACL style files);
+  **not anonymized**; Limitations/Ethics sections optional.
+- Submit via SoftConf: https://softconf.com/emnlp2026/wmt2026/ (owner needs a
+  SoftConf/START account).
+- "System papers must describe one or more shared task submissions" — cite the
+  task overview paper (placeholder cite from organizers), CometKiwi (Rei et
+  al., 2022), xCOMET (Guerreiro et al., 2024), WMT25 General-MT ESA data.
+
 ## Open questions / owner escalations
 
 1. **HF gated access** — no HF token on this machine yet; blocks CometKiwi/xCOMET download.
