@@ -1,0 +1,20 @@
+# Core inference
+setuptools<81  # torchmetrics 0.10.x (unbabel-comet pin) needs pkg_resources, removed in setuptools 81
+unbabel-comet>=2.2.4
+torch>=2.3
+transformers
+huggingface_hub[cli]
+
+# Data & metrics
+pandas
+pyarrow
+scikit-learn
+
+# Analysis & UX
+matplotlib
+tabulate  # pandas.to_markdown for calibration tables
+tqdm
+
+# Dev
+pytest
+ruff

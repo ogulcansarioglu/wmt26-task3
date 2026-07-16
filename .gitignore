@@ -1,0 +1,16 @@
+# environments
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# task data — never commit (large, and licensing belongs to WMT)
+data/
+
+# run artifacts: scores, checkpoints, manifests
+runs/
+submissions/
+
+# OS noise
+.DS_Store
