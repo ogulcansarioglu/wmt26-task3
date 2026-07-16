@@ -41,8 +41,7 @@ build-dev:  ## canonical dev parquet with Task 3 gold labels
 
 # ---- model runs (require `hf auth login` + gated-model acceptance) ----------
 
-smoke-model:  ## 10 real samples through CometKiwi on MPS — first GPU sanity check
-	$(PY) -m src.data make-smoke --out data/smoke/smoke_dev.jsonl
+smoke-model:  ## 10 real dev segments through CometKiwi on MPS — first GPU sanity check
 	$(PY) -m src.score --model cometkiwi --input data/dev/wmt25_esa_dev.parquet \
 		--run runs/model-smoke --limit 10 --batch-size 4 --overwrite
 
