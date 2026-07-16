@@ -20,10 +20,20 @@ covered (10/23) vs. threshold-transfer pairs (13/23, incl. en-de).
 
     python -m src.calibrate --run runs/dev --model <m> --mode chunked --agg min
 
-- [ ] results.md table: per-LP eval MCC + prediction balance, global vs per-LP
-- [ ] where per-LP wins (expect: LPs whose score distributions are shifted —
-      low-resource / hard pairs like en-is, en-ar_EG) and why
-- [ ] fallback audit: which LPs fell back to global and for what reason
+**CometKiwi results (2026-07-16, holdout eval, agg=min):** macro MCC
+**0.102 (global thr) → 0.173 (per-LP thrs)**, +70% relative; per-LP wins 9/13
+evaluable pairs. Full table: `runs/dev/calibration/cometkiwi_chunked_min/results.md`.
+- Global thr 0.7584 predicts 47–74% error-free on pairs whose gold rate is
+  3–25% — one threshold cannot serve 14 score distributions. Optimal per-LP
+  thresholds span 0.65–0.85.
+- Fallback audit: exactly one LP fell back (en-mas_KE, minority class absent
+  in fit split) — guard behaved as designed.
+- Variance flag: en-ar_EG per-LP MCC 0.47 rests on pred_pos 0.9% of a 4.1%
+  positive class — needs a bootstrap/CI before headline use.
+- Aggregation choice: min > mean ≈ wmean (pooled eval MCC 0.154 / 0.144 /
+  0.144) — "one error anywhere" hypothesis holds, modestly. min locked.
+- Task 2 by-product: Spearman vs gold ESA = 0.33 (weak, as expected for a
+  sentence-level DA model on long segments).
 
 ## 2. Truncation vs chunked scoring  [required artifact 2]
 
@@ -31,9 +41,21 @@ covered (10/23) vs. threshold-transfer pairs (13/23, incl. en-de).
     python -m src.analyze truncation --run runs/dev --model <m>
     python -m src.analyze compare --a .../<m>_chunked_min --b .../<m>_truncate_min
 
-- [ ] per-LP over-limit rate (how much text the truncating baseline never saw)
-- [ ] MCC delta chunked vs truncate, same split, same model
-- [ ] chunk-count distribution; oversized-chunk (unsplittable) incidence
+**CometKiwi results (2026-07-16): chunking does NOT help at score level.**
+- Corpus level: macro per-LP MCC 0.173 (chunked) vs 0.169 (truncate); pooled
+  0.154 vs 0.159. A wash.
+- Conditioned on the 4,791 over-limit segments (8.8% of dev, gold error-free
+  rate 7.2%): MCC 0.169 (chunked) vs 0.176 (truncate) — still a wash.
+- Interpretation: with ~9% exposure and median joint length ~330 tokens, a
+  512-token prefix is a sufficient quality sample for a *regression* scorer;
+  chunk-min may add as much variance as it adds coverage. The "silent
+  truncation trap" did not materialize for CometKiwi **on this dev set**.
+- Exposure table: `docs/truncation_cometkiwi_chunked.md` (over-limit 3.5–20.3%
+  per LP; en-mas_KE pathological: 246 unsplittable oversized chunks).
+- Open follow-ups: (a) re-measure exposure on REAL test data 23 July before
+  choosing the submission arm — longer test segments could flip this;
+  (b) xCOMET-XL sampled truncate arm (its error-span head plausibly *does*
+  lose signal from unseen text, unlike a regression head).
 
 ## 3. Low-resource behavior  [required artifact 3]
 
