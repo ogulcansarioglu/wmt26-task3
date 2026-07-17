@@ -69,10 +69,35 @@ evaluable pairs. Full table: `runs/dev/calibration/cometkiwi_chunked_min/results
 ## 4. Model comparison  [required artifact 4]
 
     python -m src.analyze compare --a .../cometkiwi_chunked_min --b .../xcomet-xl_chunked_min
+    python -m src.ensemble train --run runs/dev --out runs/dev/ensemble
 
-- [ ] CometKiwi vs xCOMET-XL (vs ensemble if built) on identical dev splits
-- [ ] Task 2 by-product: Spearman/Pearson vs gold ESA per model
-- [ ] xCOMET error spans: qualitative examples; span-vs-binary agreement
+**Results (2026-07-17, holdout eval, identical splits):**
+
+| system | pooled MCC | per-LP macro MCC | Spearman vs ESA |
+|---|---|---|---|
+| CometKiwi (0.5B), thresholded | 0.154 | 0.173 | 0.33 |
+| xCOMET-XL (3.5B), thresholded | 0.172 | 0.165 | 0.28 |
+| xCOMET-XL zero-span rule | -0.01 | 0.05 | — |
+| xCOMET-XL span-mass thresholded | 0.157 | 0.145 | — |
+| **LR ensemble (primary)** | **0.29–0.33** | **0.21–0.23** | — |
+
+- Single models are at parity — 7x compute buys nothing on the thresholded
+  score path. Surprise: xCOMET's Spearman vs ESA is *lower* than kiwi's on
+  these long segments.
+- **Span-head negative result**: the intuitive "no predicted error spans →
+  error-free" rule is useless (MCC ≈ 0; xCOMET predicts spans promiscuously),
+  and confidence/severity-weighted span mass underperforms the plain score.
+- **LR ensemble** (kiwi score + XL score + span mass + log length + LP
+  one-hots, balanced class weights) wins decisively and is stable over 4
+  split seeds: pooled 0.294–0.326, macro 0.209–0.231. Kept per the Stage C
+  gate; xCOMET's span signal helps only as a *feature*, not a rule.
+- Deployment: `runs/dev/ensemble/model.json` (full-dev fit, transparent
+  coefficients). QUOTE ONLY the per-seed holdout report
+  (`holdout_report.csv`); the calibrate-on-ensemble results.md is fit on
+  full-dev probabilities and is optimistic by construction. Unseen WMT26 LPs
+  get all-zero one-hots (base operating point) + global threshold.
+- TODO: feature ablation (does wsum earn its slot?); bootstrap CIs;
+  qualitative span examples for the paper.
 
 ## Decisions log
 
