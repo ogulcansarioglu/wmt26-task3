@@ -53,17 +53,28 @@ zh→ja, en→ar_EG, en→th, en→zh_TW.
 - Segments are **long multi-sentence units** ("similar to last year"), evaluated in document context. Encoder QE models WILL truncate without countermeasures → chunked scoring is required.
 - **References optional** — "provided as optional input for some but likely not all language pairs". Design fully reference-free (QE setting). Confirmed correct.
 
-## Formats
+## Formats — OFFICIAL SCHEMA PUBLISHED (Task 2 page, updated 2026-07-18)
 
-- Test input: "unified JSON data format" across Tasks 1–3, following the
-  **JSON-lines format of the General MT shared task**. Exact schema announced
-  ~1 week before 23 July. **ACTION: re-fetch subtask pages ~17–20 July.**
-- General-MT JSONL reference schema (from `wmt25-genmt.jsonl`, inspected 2026-07-16):
-  `dataset_id, collection_id, doc_id, domain, src_lang, tgt_lang, src_text,
-  video, screenshot, prompt_instruction, refs{refA{ref}}`
-- Submission output format + packaging: **not yet published**. Codabench links:
-  **not yet published** ("check here later for the link"). **ACTION: watch pages;
-  register on Codabench as soon as links appear.**
+- Test input (unified across Tasks 1–3), one JSONL record per segment:
+  `{"item_id": "srcLang_###_tgtLang_###_domain_###_docID_###_segID",
+    "src": ..., "ref": {"text": ..., "type": "human|postedit|pseudo"},
+    "hyps": {systemName: translation, ...}, "resources": {screenshot, video, asr}}`
+  Note the separator is `_###_` (WMT25 humeval used `_#_`). `ref.type`
+  distinguishes native human / post-edited / pseudo references — we stay
+  reference-free regardless.
+- Task 2 submission: `{"item_id": ..., "task2_pred": {systemName: score, ...}}`
+  (nested per item — NOT flat per-system rows). Implemented in
+  `src/submit.py::write_task_file` (`FORMAT_VERSION = official-2026-07-18+task3-inferred`).
+- Task 3 direct submission: **not yet published** (Task 3 page still dated
+  5 June). We emit the unified-format mirror `task3_pred: {system: 0|1}` —
+  **INFERRED, confirm on the Task 3 page / Codabench before real upload.**
+- Cascade threshold: declared in the Codabench UI at submission time; we
+  submit 0–100 scores, so declare `calibrated_threshold * 100`, strict `>`.
+- Codabench links: **still not published** on either page. **ACTION: keep
+  watching; register the moment they appear.**
+- Test converter: `python -m src.data convert-test --raw <official.jsonl>
+  --out data/test/test.parquet` (keeps every (item, system) pair incl. empty
+  hypotheses; label 0 is the correct call for an empty translation).
 
 ## Task 3 specifics
 

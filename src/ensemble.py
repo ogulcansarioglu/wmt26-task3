@@ -59,6 +59,8 @@ def load_joined(run: Path) -> pd.DataFrame:
     xl = xl.copy()
     xl["wsum"] = xl["error_spans"].map(span_mass)
     keep_kiwi = ["segment_id", "lp", "doc_id", "system", "score_min", "joint_tok_len"]
+    if "item_id" in kiwi.columns:
+        keep_kiwi.append("item_id")
     gold = [c for c in ("error_free", "esa_gold", "n_errors_total") if c in kiwi.columns]
     joined = kiwi[keep_kiwi + gold].merge(
         xl[["segment_id", "score_min", "wsum"]],
@@ -173,6 +175,7 @@ def cmd_predict(args: argparse.Namespace) -> None:
         for c in (
             "lp",
             "doc_id",
+            "item_id",
             "system",
             "segment_id",
             "error_free",

@@ -1,19 +1,28 @@
 """Submission formatter + validator + packager.
 
-FORMAT STATUS (2026-07-16): the WMT26 unified JSON schema and Codabench
-packaging are announced ~1 week before the 23 July test release. Until then
-this module emits a clearly-marked DRAFT format modeled on the General-MT
-JSONL the organizers said they will follow. ALL format-specific logic lives in
-`write_task_file()` — update that one function (and the validator's field
-list) when the real schema drops, re-run, done.
+FORMAT STATUS (2026-07-18): the unified WMT26 schema is now published on the
+Task 2 page (updated 2026-07-18):
 
-Usage:
-    python -m src.submit --run runs/dev --model cometkiwi --mode chunked --agg min \
-        --thresholds runs/dev/calibration/cometkiwi_chunked_min/thresholds.json \
-        --task 3 --out submissions/dev-rehearsal
+  input record:   {"item_id": "srcLang_###_tgtLang_###_domain_###_docID_###_segID",
+                   "src": ..., "ref": {"text":..., "type": "human|postedit|pseudo"},
+                   "hyps": {systemName: translation, ...}, "resources": {...}}
+  task2 output:   {"item_id": ..., "task2_pred": {systemName: score, ...}}
 
-The validator re-reads what was written and checks row counts, ID alignment
-against the scored inputs, label domain, score domain, and UTF-8 before
+Task 3 direct-submission output is NOT yet published (its page predates the
+schema drop); we emit the obvious unified-format mirror
+
+  task3 output:   {"item_id": ..., "task3_pred": {systemName: 0|1, ...}}
+
+**marked INFERRED — confirm against the Task 3 page / Codabench before the
+real upload.** ALL format-specific logic lives in `write_task_file()` and
+`validate()` — update those two and bump FORMAT_VERSION on any change.
+
+The Task 2 -> Task 3 cascade threshold is declared in the Codabench UI at
+submission time (value + strict '>' vs inclusive '≥'). We submit Task 2 scores
+on the 0-100 scale, so the declared threshold must be calibrated_threshold*100.
+
+The validator re-reads what was written and checks item counts, (item, system)
+alignment against the scored inputs, label/score domains, and UTF-8 before
 zipping. A submission that fails validation is deleted, not packaged.
 """
 
@@ -29,7 +38,7 @@ import pandas as pd
 
 from src.calibrate import load_scores
 
-FORMAT_VERSION = "draft-2026-07-16"  # bump when the official schema lands
+FORMAT_VERSION = "official-2026-07-18+task3-inferred"
 
 TEAM_NAME = "osar-mps"  # placeholder team id; confirm on Codabench registration
 
@@ -49,25 +58,27 @@ def apply_thresholds(df: pd.DataFrame, thresholds: dict, agg: str) -> pd.DataFra
     return out
 
 
+def _item_key_column(df: pd.DataFrame) -> str:
+    # Real test data carries the official item_id; dev tables predate it and
+    # use doc_id as the item key (one record per segment there too).
+    return "item_id" if "item_id" in df.columns else "doc_id"
+
+
 def write_task_file(df: pd.DataFrame, task: int, out_dir: Path) -> Path:
     """THE single place that knows the on-disk submission format."""
+    if task not in (2, 3):
+        raise SystemExit(f"task {task} not supported by this formatter")
+    key_col = _item_key_column(df)
+    pred_field = f"task{task}_pred"
+    value_col = "label" if task == 3 else "score_0_100"
     path = out_dir / f"task{task}.jsonl"
-    records = []
-    for _, row in df.iterrows():
-        rec = {
-            "doc_id": row["doc_id"],
-            "lp": row["lp"],
-            "system": row["system"],
-        }
-        if task == 3:
-            rec["error_free"] = int(row["label"])
-        elif task == 2:
-            rec["score"] = float(row["score_0_100"])
-        else:
-            raise SystemExit(f"task {task} not supported by this formatter")
-        records.append(rec)
     with open(path, "w", encoding="utf-8") as fh:
-        for rec in records:
+        for item_id, group in df.groupby(key_col, sort=True):
+            preds = {
+                str(row["system"]): (int(row[value_col]) if task == 3 else float(row[value_col]))
+                for _, row in group.iterrows()
+            }
+            rec = {"item_id": str(item_id), pred_field: preds}
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return path
 
@@ -78,36 +89,51 @@ def validate(path: Path, expected: pd.DataFrame, task: int) -> list[str]:
         raw = path.read_bytes().decode("utf-8")
     except UnicodeDecodeError as exc:
         return [f"not valid UTF-8: {exc}"]
+    pred_field = f"task{task}_pred"
+    key_col = _item_key_column(expected)
+    expected_pairs = set(
+        zip(expected[key_col].astype(str), expected["system"].astype(str), strict=True)
+    )
+    expected_items = {k for k, _ in expected_pairs}
+
     lines = [ln for ln in raw.split("\n") if ln.strip()]
-    if len(lines) != len(expected):
-        problems.append(f"row count {len(lines)} != expected {len(expected)}")
-    seen = set()
+    if len(lines) != len(expected_items):
+        problems.append(f"item count {len(lines)} != expected {len(expected_items)}")
+    seen_pairs: set[tuple[str, str]] = set()
+    seen_items: set[str] = set()
     for i, ln in enumerate(lines):
         try:
             rec = json.loads(ln)
         except json.JSONDecodeError:
             problems.append(f"line {i + 1}: invalid JSON")
             continue
-        key = (rec.get("lp"), rec.get("doc_id"), rec.get("system"))
-        if None in key:
-            problems.append(f"line {i + 1}: missing id fields")
-        if key in seen:
-            problems.append(f"line {i + 1}: duplicate id {key}")
-        seen.add(key)
-        if task == 3:
-            if rec.get("error_free") not in (0, 1):
-                problems.append(f"line {i + 1}: label {rec.get('error_free')!r} not in {{0,1}}")
-        elif task == 2:
-            score = rec.get("score")
-            if not isinstance(score, (int, float)) or not (0.0 <= float(score) <= 100.0):
-                problems.append(f"line {i + 1}: score {score!r} outside [0, 100]")
-    expected_keys = set(zip(expected["lp"], expected["doc_id"], expected["system"], strict=True))
-    missing = expected_keys - seen
-    extra = seen - expected_keys
+        item = rec.get("item_id")
+        preds = rec.get(pred_field)
+        if not isinstance(item, str) or not isinstance(preds, dict) or not preds:
+            problems.append(f"line {i + 1}: needs item_id + non-empty {pred_field} dict")
+            continue
+        if item in seen_items:
+            problems.append(f"line {i + 1}: duplicate item_id {item}")
+        seen_items.add(item)
+        for system, value in preds.items():
+            if task == 3:
+                if isinstance(value, bool) or value not in (0, 1):
+                    problems.append(f"line {i + 1}: {system}: label {value!r} not in {{0,1}}")
+            else:
+                ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+                if not ok or not (0.0 <= float(value) <= 100.0):
+                    problems.append(f"line {i + 1}: {system}: score {value!r} outside [0, 100]")
+            seen_pairs.add((item, str(system)))
+    missing = expected_pairs - seen_pairs
+    extra = seen_pairs - expected_pairs
     if missing:
-        problems.append(f"{len(missing)} expected ids missing (e.g. {sorted(missing)[:3]})")
+        problems.append(
+            f"{len(missing)} expected (item, system) pairs missing (e.g. {sorted(missing)[:3]})"
+        )
     if extra:
-        problems.append(f"{len(extra)} unexpected ids present (e.g. {sorted(extra)[:3]})")
+        problems.append(
+            f"{len(extra)} unexpected (item, system) pairs present (e.g. {sorted(extra)[:3]})"
+        )
     return problems
 
 
@@ -150,6 +176,7 @@ def main() -> None:
             print(f"  - {p}")
         sys.exit(1)
 
+    g_thr = float(thresholds["global"]["threshold"])
     meta = {
         "format_version": FORMAT_VERSION,
         "team": TEAM_NAME,
@@ -158,12 +185,13 @@ def main() -> None:
         "mode": args.mode,
         "agg": args.agg,
         "thresholds": str(thr_path),
-        "global_threshold": thresholds["global"]["threshold"],
+        "global_threshold_raw": g_thr,
         "cascade_note": (
-            "For Task 2 -> Task 3 auto-cascade, declare the global threshold above "
-            "with STRICT '>' semantics on 0-1 scores (or x100 if submitting 0-100)."
+            f"Task 2 cascade: declare threshold {g_thr * 100:.2f} on the submitted 0-100 "
+            "scale with STRICT '>' semantics (matches apply_thresholds)."
         ),
         "n_rows": int(len(df)),
+        "n_items": int(df[_item_key_column(df)].nunique()),
         "label_balance": float(df["label"].mean()) if args.task == 3 else None,
     }
     (out_dir / "submission_meta.json").write_text(json.dumps(meta, indent=2))
@@ -172,13 +200,14 @@ def main() -> None:
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(task_file, arcname=task_file.name)
     print(
-        f"[submit] validated {len(df):,} rows; label balance "
-        f"{meta['label_balance']}; archive -> {archive}"
+        f"[submit] validated {meta['n_items']:,} items / {len(df):,} predictions; "
+        f"label balance {meta['label_balance']}; archive -> {archive}"
     )
-    print(
-        f"[submit] FORMAT IS {FORMAT_VERSION} — re-verify against the official "
-        "schema before any real upload (docs/task_facts.md)."
-    )
+    if args.task == 3:
+        print(
+            "[submit] REMINDER: task3_pred field name is INFERRED from the Task 2 "
+            "schema — confirm on Codabench/Task 3 page before real upload."
+        )
 
 
 if __name__ == "__main__":

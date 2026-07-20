@@ -81,6 +81,7 @@ def _dev_rows(humeval_path: Path):
                 "lp": lp,
                 "domain": domain,
                 "doc_id": doc_id,
+                "item_id": doc_id,  # dev predates the official item_id; doc_id is the item key
                 "system": system,
                 "segment_id": f"{doc_id}::{system}",
                 "src": src,
@@ -137,6 +138,66 @@ def cmd_stats(args: argparse.Namespace) -> None:
 
     df = pd.read_parquet(DEV_PARQUET)
     _print_stats(df)
+
+
+# ---------------------------------------------------------------------------
+# official WMT26 test data (unified schema, published 2026-07-18)
+# ---------------------------------------------------------------------------
+
+
+def _parse_item_id(item_id: str) -> tuple[str, str]:
+    """`srcLang_###_tgtLang_###_domain_###_docID_###_segID` -> (lp, domain)."""
+    parts = item_id.split("_###_")
+    if len(parts) < 5:
+        sys.exit(f"unexpected item_id format (want 5 '_###_' fields): {item_id!r}")
+    return f"{parts[0]}-{parts[1]}", parts[2]
+
+
+def cmd_convert_test(args: argparse.Namespace) -> None:
+    """Official test JSONL -> canonical parquet. Unlike the dev build, EVERY
+    (item, system) pair is kept — the submission must cover all of them, so an
+    empty hypothesis becomes an empty-string row (scores near zero, label 0)
+    rather than a silently dropped prediction."""
+    import pandas as pd
+
+    rows, n_empty_hyp = [], 0
+    for rec in read_jsonl(Path(args.raw)):
+        item_id = rec["item_id"]
+        lp, domain = _parse_item_id(item_id)
+        src = rec.get("src") or ""
+        ref = rec.get("ref") or {}
+        for system, mt in (rec.get("hyps") or {}).items():
+            mt = "" if mt is None else str(mt)
+            if not mt.strip():
+                n_empty_hyp += 1
+            rows.append(
+                {
+                    "lp": lp,
+                    "domain": domain,
+                    "doc_id": item_id,
+                    "item_id": item_id,
+                    "system": str(system),
+                    "segment_id": f"{item_id}::{system}",
+                    "src": src,
+                    "mt": mt,
+                    "ref_text": (ref.get("text") if isinstance(ref, dict) else None),
+                    "ref_type": (ref.get("type") if isinstance(ref, dict) else None),
+                }
+            )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        sys.exit("no rows converted — wrong input file?")
+    dup = df["segment_id"].duplicated()
+    if dup.any():
+        sys.exit(f"duplicate (item, system) pairs: {df.loc[dup, 'segment_id'].head().tolist()}")
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(out, index=False)
+    print(
+        f"[convert-test] {len(df):,} (item, system) rows, {df['item_id'].nunique():,} items, "
+        f"{df['lp'].nunique()} LPs, {n_empty_hyp} empty hypotheses -> {out}"
+    )
+    print(df.groupby("lp").size().to_string())
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +278,7 @@ def cmd_make_smoke(args: argparse.Namespace) -> None:
                 "lp": lp,
                 "domain": "smoke",
                 "doc_id": doc_id,
+                "item_id": doc_id,
                 "system": "synthetic",
                 "segment_id": f"{doc_id}::synthetic",
                 "src": "\n".join(src_sents),
@@ -247,6 +309,11 @@ def main() -> None:
 
     p = sub.add_parser("stats", help="per-LP dev coverage table")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("convert-test", help="official WMT26 test JSONL -> canonical parquet")
+    p.add_argument("--raw", required=True)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_convert_test)
 
     p = sub.add_parser("make-smoke", help="synthetic smoke dataset")
     p.add_argument("--out", default="data/smoke/smoke_dev.jsonl")
