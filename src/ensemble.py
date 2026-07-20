@@ -71,8 +71,17 @@ def load_joined(run: Path) -> pd.DataFrame:
     return joined
 
 
-def design_matrix(df: pd.DataFrame, lp_columns: list[str] | None = None):
-    X = pd.get_dummies(df[FEATURES + ["lp"]], columns=["lp"], dtype=float)
+def design_matrix(
+    df: pd.DataFrame,
+    lp_columns: list[str] | None = None,
+    features: list[str] | None = None,
+    use_lp: bool = True,
+):
+    features = FEATURES if features is None else features
+    if use_lp:
+        X = pd.get_dummies(df[features + ["lp"]], columns=["lp"], dtype=float)
+    else:
+        X = df[features].astype(float).copy()
     if lp_columns is None:
         lp_columns = sorted(X.columns)
     X = X.reindex(columns=lp_columns, fill_value=0.0)
@@ -198,9 +207,70 @@ def cmd_predict(args: argparse.Namespace) -> None:
     print(f"[ensemble] wrote probability parquets for {df['lp'].nunique()} LPs -> {out_dir}")
 
 
+def _holdout_scores(df, features, use_lp, seeds=(DEFAULT_SEED, 29, 47, 101)):
+    """4-seed holdout (pooled + per-LP macro MCC) for one feature config."""
+    pooled, macro = [], []
+    for seed in seeds:
+        fits, evals = {}, {}
+        for lp, g in df.groupby("lp"):
+            fits[lp], evals[lp] = split_lp(g, 0.2, seed)
+        fit_all = pd.concat(fits.values())
+        ev_all = pd.concat([e for e in evals.values() if len(e)])
+        X_fit, cols = design_matrix(fit_all, features=features, use_lp=use_lp)
+        lr = fit_lr(X_fit, fit_all["error_free"].to_numpy())
+        p_fit = lr.predict_proba(X_fit)[:, 1]
+        p_ev = lr.predict_proba(design_matrix(ev_all, cols, features, use_lp)[0])[:, 1]
+        gthr, _ = best_threshold(p_fit, fit_all["error_free"].to_numpy())
+        pooled.append(evaluate(p_ev, ev_all["error_free"].to_numpy(), gthr)["mcc"])
+        per = []
+        fit_all = fit_all.assign(p=p_fit)
+        ev_all = ev_all.assign(p=p_ev)
+        for lp, e_ in ev_all.groupby("lp"):
+            f_ = fit_all[fit_all["lp"] == lp]
+            if not len(e_) or f_["error_free"].nunique() < 2:
+                continue
+            thr, _ = best_threshold(f_["p"].to_numpy(), f_["error_free"].to_numpy())
+            per.append(evaluate(e_["p"].to_numpy(), e_["error_free"].to_numpy(), thr)["mcc"])
+        macro.append(float(np.mean(per)))
+    return float(np.mean(pooled)), float(np.mean(macro))
+
+
+def cmd_ablate(args: argparse.Namespace) -> None:
+    df = load_joined(Path(args.run))
+    df = df[df["error_free"].notna()].copy()
+    df["error_free"] = df["error_free"].astype(int)
+    configs = [
+        ("full", FEATURES, True),
+        ("- kiwi score", [f for f in FEATURES if f != "score_min_kiwi"], True),
+        ("- xl score", [f for f in FEATURES if f != "score_min_xl"], True),
+        ("- span mass", [f for f in FEATURES if f != "wsum"], True),
+        ("- log length", [f for f in FEATURES if f != "log_len"], True),
+        ("- lp one-hots", FEATURES, False),
+        ("kiwi only (+lp)", ["score_min_kiwi"], True),
+        ("xl only (+lp)", ["score_min_xl"], True),
+    ]
+    rows = []
+    for name, feats, use_lp in configs:
+        pooled, macro = _holdout_scores(df, feats, use_lp)
+        rows.append({"config": name, "pooled_mcc": round(pooled, 4), "macro_mcc": round(macro, 4)})
+        print(f"[ablate] {name:<16} pooled {pooled:.4f}  macro {macro:.4f}")
+    table = pd.DataFrame(rows)
+    out = Path("docs/ablation_ensemble.md")
+    out.write_text(
+        "# Ensemble feature ablation (4-seed holdout means)\n\n"
+        + table.to_markdown(index=False)
+        + "\n"
+    )
+    print(f"[ablate] -> {out}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="src.ensemble")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("ablate")
+    p.add_argument("--run", required=True)
+    p.set_defaults(func=cmd_ablate)
 
     p = sub.add_parser("train")
     p.add_argument("--run", required=True)

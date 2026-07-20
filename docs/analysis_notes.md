@@ -99,6 +99,41 @@ evaluable pairs. Full table: `runs/dev/calibration/cometkiwi_chunked_min/results
 - TODO: feature ablation (does wsum earn its slot?); bootstrap CIs;
   qualitative span examples for the paper.
 
+## 4b. Ensemble feature ablation (2026-07-19, `src.ensemble ablate`, 4-seed means)
+
+Full table: `docs/ablation_ensemble.md`. Findings:
+- **CometKiwi is redundant given xCOMET-XL**: dropping it slightly *improves*
+  (pooled 0.318 vs 0.315). The competitive core = XL + log_len + LP one-hots.
+- **LP one-hots do the distribution alignment** for the single-threshold
+  operating point (pooled 0.315 → 0.207 without them; macro unaffected —
+  per-LP thresholds absorb the same effect).
+- **log_len is the second-strongest signal** for macro (0.219 → 0.187
+  without it). Partly encodes the "long segments are rarely error-free" prior.
+- Span mass ≈ redundant with the XL score (within noise).
+- Keep the full trained ensemble for the submission (differences are within
+  seed noise; stability > micro-optimization), report the ablation honestly.
+
+## 5. Bootstrap CIs (2026-07-19, `src.analyze bootstrap`, n=1000)
+
+Full tables: `docs/bootstrap_ensemble_chunked_min.md`. Headlines:
+- Deployed ensemble (per-LP thresholds, seed-13 eval): pooled MCC 0.234
+  [0.209, 0.258].
+- **Protocol nuance for the paper**: per-LP thresholds trade pooled MCC for
+  macro fairness; the ~0.31 pooled figure comes from the global-threshold
+  operating point in the 4-seed holdout. Never mix the two in one table.
+- en-ar_EG outlier is REAL: 0.468 [0.284, 0.602] — CI excludes 0 decisively.
+- Fragile pairs (CI touches 0): en-bho_IN, en-et_EE, en-is_IS.
+
+## 6. Dress rehearsal (2026-07-19)
+
+Official-schema fake test (12 items / 236 hyps, 3 LPs) through the full
+23-July path: convert-test → kiwi → XL → ensemble predict → dev thresholds →
+package+validate, Tasks 2+3 both green. Caught and fixed a real blocker:
+`load_scores` hard-required gold labels (now opt-in, calibrate only,
+regression-tested). Open decision: Task 2 variant strategy — ensemble
+prob×100 (feeds cascade coherently) vs raw XL score (better ESA correlation
+if the Task 2 leaderboard matters). Decide before 23 July.
+
 ## Decisions log
 
 - 2026-07-16: reference-free design locked (refs optional in task, absent for

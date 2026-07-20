@@ -126,9 +126,89 @@ def cmd_compare(args: argparse.Namespace) -> None:
     print(pd.DataFrame(rows).to_markdown(index=False))
 
 
+def cmd_bootstrap(args: argparse.Namespace) -> None:
+    """95% bootstrap CIs for eval-split MCC under the deployed thresholds.
+    Predictions are fixed by the calibrated thresholds; resampling is over
+    eval rows only — the CI quantifies eval-sample variation, which is the
+    honest error bar for every headline number in the paper."""
+    import numpy as np
+    from sklearn.metrics import matthews_corrcoef
+
+    run = Path(args.run)
+    thr_blob = json.loads(
+        (
+            run / "calibration" / f"{args.model}_{args.mode}_{args.agg}" / "thresholds.json"
+        ).read_text()
+    )
+    g_thr = float(thr_blob["global"]["threshold"])
+    per_lp = thr_blob.get("per_lp", {})
+    seed = int(thr_blob.get("seed", DEFAULT_SEED))
+    holdout = float(thr_blob.get("holdout", 0.2))
+    col = f"score_{args.agg}"
+
+    df = load_scores(run, args.model, args.mode, require_gold=True)
+    evs = []
+    for _lp, df_lp in df.groupby("lp"):
+        _, ev = split_lp(df_lp, holdout, seed)
+        if len(ev):
+            evs.append(ev)
+    ev_all = pd.concat(evs, ignore_index=True)
+    thr_per_row = ev_all["lp"].map(lambda lp: per_lp.get(lp, {}).get("threshold", g_thr))
+    ev_all = ev_all.assign(pred=(ev_all[col].to_numpy() > thr_per_row.to_numpy()).astype(int))
+
+    rng = np.random.default_rng(DEFAULT_SEED)
+
+    def point_and_ci(gold, pred, n_boot):
+        def mcc(gd, pr):
+            if len(np.unique(pr)) < 2 or len(np.unique(gd)) < 2:
+                return 0.0
+            return matthews_corrcoef(gd, pr)
+
+        point = mcc(gold, pred)
+        n = len(gold)
+        boots = np.empty(n_boot)
+        for b in range(n_boot):
+            idx = rng.integers(0, n, n)
+            boots[b] = mcc(gold[idx], pred[idx])
+        lo, hi = np.percentile(boots, [2.5, 97.5])
+        return point, lo, hi
+
+    rows = []
+    scopes = [("POOLED", ev_all)] + sorted(ev_all.groupby("lp"), key=lambda t: t[0])
+    for name, sub in scopes:
+        gold = sub["error_free"].to_numpy().astype(int)
+        pred = sub["pred"].to_numpy()
+        point, lo, hi = point_and_ci(gold, pred, args.n)
+        rows.append(
+            {
+                "scope": name,
+                "n_eval": len(sub),
+                "mcc": round(point, 4),
+                "ci95_lo": round(float(lo), 4),
+                "ci95_hi": round(float(hi), 4),
+            }
+        )
+    table = pd.DataFrame(rows)
+    print(table.to_markdown(index=False))
+    out = Path(f"docs/bootstrap_{args.model}_{args.mode}_{args.agg}.md")
+    out.write_text(
+        f"# Bootstrap 95% CIs — {args.model}/{args.mode}/{args.agg} "
+        f"(n_boot={args.n}, deployed thresholds)\n\n" + table.to_markdown(index=False) + "\n"
+    )
+    print(f"[bootstrap] -> {out}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="src.analyze")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("bootstrap")
+    p.add_argument("--run", required=True)
+    p.add_argument("--model", required=True)
+    p.add_argument("--mode", default="chunked")
+    p.add_argument("--agg", default="min")
+    p.add_argument("--n", type=int, default=1000)
+    p.set_defaults(func=cmd_bootstrap)
 
     p = sub.add_parser("truncation")
     p.add_argument("--run", required=True)

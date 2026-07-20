@@ -1,0 +1,122 @@
+% WMT 2026 system description — Task 3 (error-free segment detection)
+% Deadline 7 Aug 2026 (SoftConf: https://softconf.com/emnlp2026/wmt2026/)
+% NOT anonymized (system papers). Compile on Overleaf (no local LaTeX on the
+% build machine): upload this directory as-is; pdfLaTeX + BibTeX.
+% Numbers marked \todo{} must be regenerated from runs/ before submission.
+\documentclass[11pt]{article}
+\usepackage[final]{acl}
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\newcommand{\todo}[1]{\textbf{\textcolor{red}{[TODO: #1]}}}
+\usepackage{xcolor}
+
+\title{Laptop-Scale Calibration Beats Bigger Models Alone:\\
+Error-Free Segment Detection at the WMT26 Quality Evaluation Task}
+
+\author{Ogulcan Sarioglu \\
+  Independent Researcher \\
+  \texttt{ogulcansarioglu1@gmail.com}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe our submission to Task 3 (detection of error-free segments) of
+the WMT26 Automated Translation Quality Evaluation shared task, with Task 2
+as a by-product. Our system runs entirely on a single consumer laptop
+(Apple M4 Max, MPS backend) at zero cloud cost: reference-free COMET-family
+encoders (CometKiwi, xCOMET-XL) feed a transparent logistic-regression
+ensemble over model scores, predicted-error-span mass, and segment length,
+thresholded per language pair with MCC-optimal cutoffs and a guarded global
+fallback for uncovered pairs. On a 54{,}419-segment development set built
+from the WMT25 ESA human evaluation, per-language-pair calibration improves
+macro MCC by ~70\% over a single global threshold (0.102 $\to$ 0.173 for
+CometKiwi), the ensemble reaches pooled MCC \todo{0.29--0.33 final} versus
+0.17 for the best single model, and — contrary to the received wisdom that
+motivated this year's long-segment design — model-side truncation is
+statistically indistinguishable from aligned chunked scoring for
+regression-style QE at the observed 8.8\% over-limit exposure.
+\todo{Official test results in camera-ready.}
+\end{abstract}
+
+\section{Introduction}
+% Task 3: binary error-free detection, MCC-ranked; 23 LPs; long multi-sentence
+% segments; references optional -> we are reference-free throughout.
+\todo{1--2 paragraphs: task definition, cite task overview; our three design
+commitments: (1) fully local/open (consumer laptop, \$0 cloud), (2)
+calibration-centric rather than model-centric, (3) honest negative results.}
+
+\section{System description}
+\subsection{Base scorers}
+CometKiwi \cite{rei-etal-2022-cometkiwi} and xCOMET-XL
+\cite{guerreiro-etal-2024-xcomet}, reference-free inputs only, fp32 on MPS.
+Throughput on one M4 Max: $\sim$10 seg/s (0.5B CometKiwi, batch 16),
+$\sim$2 seg/s (3.5B xCOMET-XL, batch 4); the full 54k-segment dev sweep is
+an overnight job.
+
+\subsection{Long-segment handling}
+Aligned mass-balanced chunking under the 512-token joint window; per-chunk
+scores aggregated by min/mean/weighted-mean (min wins for Task 3 on dev:
+pooled MCC 0.154 vs.\ 0.144). Unsplittable chunks are flagged, never hidden.
+\todo{one paragraph algorithm sketch; refer to repo.}
+
+\subsection{Ensemble}
+Logistic regression over [kiwi score, XL score, severity/confidence-weighted
+span mass, log length, LP one-hots]; class-balanced; unseen LPs fall back to
+the base operating point (all-zero one-hots). Coefficients are published as
+JSON — the entire decision function is auditable.
+
+\subsection{Calibration protocol}
+Per-LP MCC-optimal thresholds on an 80/20 stratified split; global fallback
+when the fit split is small, one-class, or the per-LP threshold degenerates
+to single-class predictions on held-out data. Prediction rule: score $>$
+threshold $\Rightarrow$ error-free.
+
+\section{Development setup}
+Dev set: WMT25 General-MT ESA human evaluation \cite{kocmi-etal-2025-findings},
+converted to 54{,}419 (segment, system) pairs over 14 LPs; gold label =
+mean ESA $\geq 85$ AND zero annotated spans, mirroring the organizers'
+documented derivation. Global error-free rate 0.134; per-LP 0.00--0.39.
+10 of 23 WMT26 pairs have direct dev coverage; the rest ride the global
+threshold — a transfer setting we analyze explicitly.
+
+\section{Results on development data}
+\subsection{Per-LP vs.\ global thresholds}
+\todo{table from runs/dev/calibration/*/results.csv; headline: macro MCC
+0.102 (global) vs 0.173 (per-LP) for CometKiwi; per-LP wins 9/13; global
+threshold predicts 47--74\% positive on pairs whose true rate is 3--25\%.}
+
+\subsection{Truncation vs.\ chunking (negative result)}
+\todo{table: corpus-level wash (0.173 vs 0.169 macro), STILL a wash on the
+4{,}791 over-limit segments (0.169 vs 0.176); interpretation: a 512-token
+prefix is a sufficient quality sample for a regression scorer; caveat: test
+exposure re-measured on 23 July; bootstrap CIs.}
+
+\subsection{Low-resource behavior}
+\todo{score distributions (fig), en-ar\_EG inversion case study, threshold
+transfer quality for uncovered pairs, en-mas\_KE degenerate pair.}
+
+\subsection{Model comparison and ensemble}
+\todo{table: kiwi vs XL vs ensemble on identical splits, 4-seed holdout
+(pooled 0.29--0.33; macro 0.21--0.23); xCOMET zero-span rule MCC $\approx$ 0
+but span mass is a useful ensemble feature; feature ablation table; Task 2
+Spearman by model.}
+
+\section{Official results}
+\todo{camera-ready: leaderboard placement + post-hoc analysis.}
+
+\section{Conclusion}
+\todo{3 sentences: calibration and honest evaluation beat raw scale at fixed
+(laptop) compute; everything reproducible from the public repo.}
+
+\section*{Limitations}
+\todo{sentence-splitter simplicity; single-machine wall-clock; dev-test
+distribution shift (threshold sensitivity of the gold rule); 2-variant
+submission cap constrains what is officially scored.}
+
+\bibliography{refs}
+
+\end{document}
