@@ -90,13 +90,13 @@ def split_lp(df_lp: pd.DataFrame, holdout: float, seed: int) -> tuple[pd.DataFra
     return fit, ev
 
 
-def load_scores(run: Path, model: str, mode: str) -> pd.DataFrame:
+def load_scores(run: Path, model: str, mode: str, require_gold: bool = False) -> pd.DataFrame:
     score_dir = run / "scores" / model / mode
     files = sorted(score_dir.glob("*.parquet"))
     if not files:
         raise SystemExit(f"no score parquets under {score_dir}; run src.score first")
     df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
-    if "error_free" not in df.columns or df["error_free"].isna().any():
+    if require_gold and ("error_free" not in df.columns or df["error_free"].isna().any()):
         raise SystemExit("scores lack gold error_free labels; calibrate needs dev data")
     return df
 
@@ -116,7 +116,7 @@ def main() -> None:
     args = parser.parse_args()
 
     run = Path(args.run)
-    df = load_scores(run, args.model, args.mode)
+    df = load_scores(run, args.model, args.mode, require_gold=True)
     score_col = f"score_{args.agg}"
     if score_col not in df.columns:
         raise SystemExit(f"missing column {score_col}")

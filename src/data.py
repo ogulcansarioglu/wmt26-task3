@@ -296,6 +296,43 @@ def cmd_make_smoke(args: argparse.Namespace) -> None:
     print(f"[make-smoke] wrote {n} synthetic segments -> {out}")
 
 
+def cmd_make_fake_test(args: argparse.Namespace) -> None:
+    """Re-emit a dev slice in the official test schema. Exercises the exact
+    23-July path (convert-test -> score -> ensemble -> submit) end to end."""
+    import pandas as pd
+
+    df = pd.read_parquet(args.dev)
+    if args.lps:
+        df = df[df["lp"].isin({x.strip() for x in args.lps.split(",")})]
+    rng = random.Random(args.seed)
+    records = []
+    for lp, g in df.groupby("lp"):
+        doc_ids = sorted(g["doc_id"].unique())
+        picked = rng.sample(doc_ids, min(args.items_per_lp, len(doc_ids)))
+        src_lang, tgt_lang = lp.split("-", 1)
+        for doc_id in picked:
+            rows = g[g["doc_id"] == doc_id]
+            parts = doc_id.split("_#_")  # dev id: lp _#_ domain _#_ origin _#_ seg
+            origin = parts[2] if len(parts) >= 3 else doc_id
+            seg = parts[3] if len(parts) >= 4 else "0"
+            item_id = (
+                f"{src_lang}_###_{tgt_lang}_###_{rows.iloc[0]['domain']}_###_{origin}_###_{seg}"
+            )
+            records.append(
+                {
+                    "item_id": item_id,
+                    "src": rows.iloc[0]["src"],
+                    "ref": None,
+                    "hyps": {r["system"]: r["mt"] for _, r in rows.iterrows()},
+                    "resources": None,
+                }
+            )
+    out = Path(args.out)
+    n = write_jsonl(out, records)
+    n_hyps = sum(len(r["hyps"]) for r in records)
+    print(f"[make-fake-test] {n} items, {n_hyps} hypotheses -> {out}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="src.data")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -314,6 +351,17 @@ def main() -> None:
     p.add_argument("--raw", required=True)
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_convert_test)
+
+    p = sub.add_parser(
+        "make-fake-test",
+        help="dev slice re-emitted in the OFFICIAL test schema (dress rehearsal input)",
+    )
+    p.add_argument("--dev", default=str(DEV_PARQUET))
+    p.add_argument("--out", required=True)
+    p.add_argument("--items-per-lp", type=int, default=4)
+    p.add_argument("--lps", default=None, help="comma-separated LP subset")
+    p.add_argument("--seed", type=int, default=13)
+    p.set_defaults(func=cmd_make_fake_test)
 
     p = sub.add_parser("make-smoke", help="synthetic smoke dataset")
     p.add_argument("--out", default="data/smoke/smoke_dev.jsonl")

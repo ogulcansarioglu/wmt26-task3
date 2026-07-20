@@ -37,3 +37,29 @@ def test_evaluate_flags_degenerate_predictions():
     result = evaluate(scores, labels, threshold=0.0)  # everything predicted 1
     assert result["single_class_pred"]
     assert result["mcc"] == 0.0
+
+
+def test_load_scores_gold_gate_is_opt_in(tmp_path):
+    """Test-day regression guard: submission loads scores WITHOUT gold labels;
+    only calibration demands them (caught live in the 2026-07-19 rehearsal)."""
+    import pandas as pd
+    import pytest
+
+    from src.calibrate import load_scores
+
+    score_dir = tmp_path / "scores" / "m" / "chunked"
+    score_dir.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "lp": ["en-de_DE"],
+            "doc_id": ["d1"],
+            "system": ["s"],
+            "segment_id": ["d1::s"],
+            "score_min": [0.5],
+        }
+    ).to_parquet(score_dir / "en-de_DE.parquet", index=False)
+
+    df = load_scores(tmp_path, "m", "chunked")  # no gold: fine for submit
+    assert len(df) == 1
+    with pytest.raises(SystemExit):
+        load_scores(tmp_path, "m", "chunked", require_gold=True)
